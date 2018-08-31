@@ -62,7 +62,8 @@ namespace HaBot
                 // IStorage dataStore = new Microsoft.Bot.Builder.Azure.AzureTableStorage("AzureTablesConnectionString", "TableName");
                 // IStorage dataStore = new Microsoft.Bot.Builder.Azure.AzureBlobStorage("AzureBlobConnectionString", "containerName");
 
-                options.Middleware.Add(new ConversationState<EchoState>(dataStore));
+                //options.Middleware.Add(new ConversationState<MultiplePromptsState>(dataStore));
+                options.Middleware.Add(new ConversationState<ProfileState>(dataStore));
             });
         }
 
