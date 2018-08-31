@@ -30,15 +30,11 @@ namespace HaBot
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-            services.AddBot<EchoBot>(options =>
+            services.AddBot<HaBot>(options =>
             {
                 options.CredentialProvider = new ConfigurationCredentialProvider(Configuration);
 
-                // The CatchExceptionMiddleware provides a top-level exception handler for your bot. 
-                // Any exceptions thrown by other Middleware, or by your OnTurn method, will be 
-                // caught here. To facillitate debugging, the exception is sent out, via Trace, 
-                // to the emulator. Trace activities are NOT displayed to users, so in addition
-                // an "Ooops" message is sent. 
+                
                 options.Middleware.Add(new CatchExceptionMiddleware<Exception>(async (context, exception) =>
                 {
                     await context.TraceActivity("EchoBot Exception", exception);
@@ -47,11 +43,11 @@ namespace HaBot
 
                 // The Memory Storage used here is for local bot debugging only. When the bot
                 // is restarted, anything stored in memory will be gone. 
-                IStorage dataStore = new MemoryStorage();
+                //IStorage dataStore = new MemoryStorage();
 
                 // The File data store, shown here, is suitable for bots that run on 
                 // a single machine and need durable state across application restarts.                 
-                // IStorage dataStore = new FileStorage(System.IO.Path.GetTempPath());
+                IStorage dataStore = new FileStorage(System.IO.Path.GetTempPath());
 
                 // For production bots use the Azure Table Store, Azure Blob, or 
                 // Azure CosmosDB storage provides, as seen below. To include any of 

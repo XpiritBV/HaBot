@@ -9,11 +9,11 @@ using System.Threading.Tasks;
 
 namespace HaBot
 {
-    public class EchoBot : IBot
+    public class HaBot : IBot
     {
         private readonly IConfiguration _configuration;
         
-        public EchoBot(IConfiguration configuration)
+        public HaBot(IConfiguration configuration)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
 
