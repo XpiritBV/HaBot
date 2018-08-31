@@ -124,22 +124,30 @@ namespace HaBot
         //client to talk to Speaker Recognition API
         private readonly SpeakerIdentificationServiceClient _client;
 
+        /// <summary>
+        /// Main menu items
+        /// </summary>
         private static class MainMenu
         {
             public const string ManageProfiles = "Manage Profiles";
             public const string RecognizeSpeaker = "Recognize Speaker";
         }
 
+        /// <summary>
+        /// Profile menu items
+        /// </summary>
         private static class ProfileMenu
         {
             public const string ViewProfile = "View Profile";
             public const string DeleteProfile = "Delete Profile";
             public const string CreateProfile = "Create Profile";
             public const string EnrollProfile = "Enroll Profile";
-            public const string MainMenu = "Main menu";
+            public const string BackToMainMenu = "Main menu";
         }
 
-        /// <summary>Defines the IDs of the prompts in the set.</summary>
+        /// <summary>
+        /// Defines the IDs of the input prompts.
+        /// </summary>
         private static class Inputs
         {
             public const string ManageOrRecognize = "manageOrRecognizePrompt";
@@ -160,53 +168,91 @@ namespace HaBot
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
 
-            //read settings
+            //config settings
             string subscriptionKey = configuration[SubscriptionKeySettingKey];
             if (string.IsNullOrWhiteSpace(subscriptionKey))
                 throw new ArgumentException($"{SubscriptionKeySettingKey} setting is missing from configuration",
                     nameof(configuration));
 
+            //communication client for Azure Speaker Recognition
             _client = new SpeakerIdentificationServiceClient(subscriptionKey);
 
-            //add main dialogs
-            Add(Inputs.ManageOrRecognize, new ChoicePrompt(Culture.English));
+            //add main dialog
+            AddMainDialog();
 
-            Add(Dialogs.MainDialogName, new WaterfallStep[]
+            //add profile dialog
+            AddProfileDialog();
+
+            //add recognizer dialog
+            AddRecognizerDialog();
+        }
+
+        /// <summary>
+        /// Adds speaker recognition dialog
+        /// </summary>
+        private void AddRecognizerDialog()
+        {
+            Add(Inputs.RecognizeThisPrompt, new AttachmentPrompt());
+
+            Add(Dialogs.RecognizeSpeakerDialogName, new WaterfallStep[]
             {
                 async (dc, args, next) =>
                 {
-                    // Prompt for action.
-                    var mainOptions = new List<string>
-                    {
-                        MainMenu.ManageProfiles,
-                        MainMenu.RecognizeSpeaker
-                    };
-                    await dc.Prompt(Inputs.ManageOrRecognize, "What do you want to do?", new ChoicePromptOptions
-                    {
-                        Choices = ChoiceFactory.ToChoices(mainOptions),
-                        RetryPromptActivity = MessageFactory.SuggestedActions(mainOptions, "Please select an option.") as Activity
-                    });
+                    await dc.Prompt(Inputs.RecognizeThisPrompt, "Please upload a .wav file", new PromptOptions());
                 },
                 async (dc, args, next) =>
                 {
-                    var action = (FoundChoice) args["Value"];
-                    switch (action.Value)
-                    {
-                        case MainMenu.ManageProfiles:
-                            await dc.Replace(Dialogs.ManageProfileDialogName);
-                            break;
+                    //Get attachment details
+                    var attachment = ((List<Attachment>) args["Attachments"]).FirstOrDefault();
 
-                        case MainMenu.RecognizeSpeaker:
-                            await dc.Replace(Dialogs.RecognizeSpeakerDialogName);
-                            break;
+                    if (attachment == null)
+                    {
+                        await dc.Context.SendActivity("I didn't get the attachment...");
+                        //we're done
+                        await dc.Replace(Dialogs.MainDialogName);
+                        return;
                     }
+
+                    if (attachment.ContentType != "audio/wav" || string.IsNullOrWhiteSpace(attachment.ContentUrl))
+                    {
+                        await dc.Context.SendActivity($"I didn't get a .wav file attachment...");
+                        //we're done
+                        await dc.Replace(Dialogs.MainDialogName);
+                        return;
+                    }
+
+                    var state = dc.Context.GetConversationState<ProfileState>();
+
+                    string attachmentContentUrl = attachment.ContentUrl;
+
+                    //Get all enrolled profiles
+                    var profiles = await _client.GetProfilesAsync();
+                    foreach (var profile in profiles)
+                    {
+                        if (profile.EnrollmentStatus == EnrollmentStatus.Enrolled
+                            && !state.AllSpeakers.Contains(profile.ProfileId))
+                        {
+                            state.AllSpeakers.Add(profile.ProfileId);
+                        }
+                    }
+
+                    //send attachment in chunks to be analyzed
+                    await dc.Context.SendActivity("Analyzing your voice...");
+
+                    await AnalyzeWavFile(attachmentContentUrl, dc, state);
+
+                    await dc.Context.SendActivity("Analysis complete.");
+                    //we're done
+                    await dc.Replace(Dialogs.MainDialogName);
                 }
             });
+        }
 
-            Add(Inputs.NamePrompt, new TextPrompt(NameValidator));
-
-
-            //add profile dialogs
+        /// <summary>
+        /// Adds speaker profile management dialog
+        /// </summary>
+        private void AddProfileDialog()
+        {
             Add(Inputs.ManageProfile, new ChoicePrompt(Culture.English));
 
             Add(Dialogs.ManageProfileDialogName, new WaterfallStep[]
@@ -220,12 +266,13 @@ namespace HaBot
                         ProfileMenu.CreateProfile,
                         ProfileMenu.DeleteProfile,
                         ProfileMenu.EnrollProfile,
-                        ProfileMenu.MainMenu
+                        ProfileMenu.BackToMainMenu
                     };
                     await dc.Prompt(Inputs.ManageProfile, "What do you want to do?", new ChoicePromptOptions
                     {
                         Choices = ChoiceFactory.ToChoices(mainOptions),
-                        RetryPromptActivity = MessageFactory.SuggestedActions(mainOptions, "Please select an option.") as Activity
+                        RetryPromptActivity =
+                            MessageFactory.SuggestedActions(mainOptions, "Please select an option.") as Activity
                     });
                 },
                 async (dc, args, next) =>
@@ -249,11 +296,12 @@ namespace HaBot
                             await dc.Replace(Dialogs.EnrollProfileDialogName);
                             break;
 
-                        case ProfileMenu.MainMenu:
+                        case ProfileMenu.BackToMainMenu:
                             await dc.Replace(Dialogs.MainDialogName);
                             break;
                     }
-                }});
+                }
+            });
 
             Add(Dialogs.ViewProfileDialogName, new WaterfallStep[]
             {
@@ -332,7 +380,8 @@ namespace HaBot
                     if (state.ProfileId.HasValue)
                     {
                         //exists
-                        await dc.Context.SendActivity($"I know you {state.Name}. Your existing profile id is: {state.ProfileId.Value}");
+                        await dc.Context.SendActivity(
+                            $"I know you {state.Name}. Your existing profile id is: {state.ProfileId.Value}");
                     }
                     else
                     {
@@ -467,58 +516,65 @@ namespace HaBot
                     await EnrollWavFile(attachmentContentUrl, state.ProfileId.Value, dc);
 
                     await dc.Context.SendActivity("Enrolling of attachment is complete.");
-                    
+
                     //we're done
                     await dc.Replace(Dialogs.ManageProfileDialogName);
                 }
             });
 
             Add(Inputs.EnrollProfilePrompt, new AttachmentPrompt());
+        }
 
-            //add recognizer dialogs
-            Add(Inputs.RecognizeThisPrompt, new AttachmentPrompt());
+        /// <summary>
+        /// Adds main menu
+        /// </summary>
+        private void AddMainDialog()
+        {
+            Add(Inputs.ManageOrRecognize, new ChoicePrompt(Culture.English));
 
-            Add(Dialogs.RecognizeSpeakerDialogName, new WaterfallStep[]
+            Add(Dialogs.MainDialogName, new WaterfallStep[]
             {
                 async (dc, args, next) =>
                 {
-                    await dc.Prompt(Inputs.RecognizeThisPrompt, "Please upload a .wav file", new PromptOptions());
+                    // Prompt for action.
+                    var mainOptions = new List<string>
+                    {
+                        MainMenu.ManageProfiles,
+                        MainMenu.RecognizeSpeaker
+                    };
+                    await dc.Prompt(Inputs.ManageOrRecognize, "What do you want to do?", new ChoicePromptOptions
+                    {
+                        Choices = ChoiceFactory.ToChoices(mainOptions),
+                        RetryPromptActivity =
+                            MessageFactory.SuggestedActions(mainOptions, "Please select an option.") as Activity
+                    });
                 },
                 async (dc, args, next) =>
                 {
-                    //Get attachment details
-                    var attachment = ((List<Attachment>) args["Attachments"]).FirstOrDefault();
-
-                    if (attachment == null)
+                    var action = (FoundChoice) args["Value"];
+                    switch (action.Value)
                     {
-                        await dc.Context.SendActivity("I didn't get the attachment...");
-                        //we're done
-                        await dc.Replace(Dialogs.MainDialogName);
-                        return;
+                        case MainMenu.ManageProfiles:
+                            await dc.Replace(Dialogs.ManageProfileDialogName);
+                            break;
+
+                        case MainMenu.RecognizeSpeaker:
+                            await dc.Replace(Dialogs.RecognizeSpeakerDialogName);
+                            break;
                     }
-
-                    if (attachment.ContentType != "audio/wav" || string.IsNullOrWhiteSpace(attachment.ContentUrl))
-                    {
-                        await dc.Context.SendActivity($"I didn't get a .wav file attachment...");
-                        //we're done
-                        await dc.Replace(Dialogs.MainDialogName);
-                        return;
-                    }
-
-                    string attachmentContentUrl = attachment.ContentUrl;
-
-                    //send attachment in chunks to be analyzed
-                    await dc.Context.SendActivity("Analyzing your voice...");
-
-                    await AnalyzeWavFile(attachmentContentUrl, dc);
-
-                    await dc.Context.SendActivity("Analysis complete.");
-                    //we're done
-                    await dc.Replace(Dialogs.MainDialogName);
                 }
             });
+
+            Add(Inputs.NamePrompt, new TextPrompt(NameValidator));
         }
 
+        /// <summary>
+        /// Takes the uploaded attachment and uses that to enroll the current profile.
+        /// </summary>
+        /// <param name="attachmentContentUrl"></param>
+        /// <param name="profileId"></param>
+        /// <param name="dc"></param>
+        /// <returns></returns>
         private async Task EnrollWavFile(string attachmentContentUrl, Guid profileId, DialogContext dc)
         {
             try
@@ -569,12 +625,11 @@ namespace HaBot
         /// <param name="attachmentContentUrl"></param>
         /// <param name="dc"></param>
         /// <returns></returns>
-        private async Task AnalyzeWavFile(string attachmentContentUrl, DialogContext dc)
+        private async Task AnalyzeWavFile(string attachmentContentUrl, DialogContext dc, ProfileState state)
         {
             try
             {
                 var stream = await _httpClient.GetStreamAsync(attachmentContentUrl);
-                var state = dc.Context.GetConversationState<ProfileState>();
                 var audioFormat = new AudioFormat(AudioEncoding.PCM, 1, 16000, 16,
                     new AudioContainer(AudioContainerType.WAV));
 
@@ -582,8 +637,16 @@ namespace HaBot
                 {
                     if (partialResult.Succeeded)
                     {
-                        await dc.Context.SendActivity(
-                            $"Recognized profile '{partialResult.Value.IdentifiedProfileId}', confidence '{partialResult.Value.Confidence}'.");
+                        var profileId = partialResult.Value.IdentifiedProfileId;
+
+                        if (profileId == state.ProfileId.GetValueOrDefault())
+                        {
+                            await dc.Context.SendActivity($"Recognized you, confidence '{partialResult.Value.Confidence}'.");
+                        }
+                        else
+                        {
+                            await dc.Context.SendActivity($"Recognized other profile '{profileId}', confidence '{partialResult.Value.Confidence}'.");
+                        }
                     }
                     else
                     {
@@ -591,8 +654,7 @@ namespace HaBot
                     }
                 }
 
-                using (var client = new ClientFactory().CreateRecognitionClient(_configuration, Guid.NewGuid(),
-                    state.AllSpeakers, 5, 10, audioFormat, ResultCallBack, _client))
+                using (var client = new ClientFactory().CreateRecognitionClient(_configuration, Guid.NewGuid(), state.AllSpeakers.ToArray(), 5, 10, audioFormat, ResultCallBack, _client))
                 {
                     using (stream)
                     {
@@ -616,7 +678,12 @@ namespace HaBot
             }
         }
 
-
+        /// <summary>
+        /// Asks for user name.
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="result"></param>
+        /// <returns></returns>
         private async Task NameValidator(ITurnContext context, TextResult result)
         {
             if (result.Value.Length <= 2)
@@ -624,76 +691,6 @@ namespace HaBot
                 result.Status = PromptStatus.NotRecognized;
                 await context.SendActivity("Your name should be at least 2 characters long.");
             }
-        }
-
-
-
-    }
-
-    /// <summary>
-    /// Class for storing conversation state.
-    /// </summary>
-    public class ProfileState : Dictionary<string, object>
-    {
-        private const string NameKey = "name";
-        private const string ProfileKey = "profile";
-        private const string SelectActionKey = "action";
-        private const string EnrollmentStatusKey = "enrollmentStatus";
-
-        private static readonly Guid AlexId = new Guid("4ac7dda3-56a5-45cc-8bda-1183899bf4bf");
-        private static readonly Guid LoekId = new Guid("ab8d4c0d-2896-47ac-9c79-d7fb0efb1bb3");
-        private static readonly Guid UnEnrolledId = new Guid("b000d66e-f846-4a98-865e-e0d34a0480d0");
-
-        public Guid[] AllSpeakers = { LoekId, AlexId };
-
-        public const string ManageProfiles = "Manage Profiles";
-        public const string RecognizeSpeaker = "Recognize Speaker";
-
-        public string Name
-        {
-            get => (string)(TryGetValue(NameKey, out var value) ? value : null);
-            set
-            {
-                this[NameKey] = value;
-
-                //makes up for the fact that we have no centralized storage for state.
-                if (value.ToUpperInvariant() == "LOEK")
-                    ProfileId = LoekId;
-                else if (value.ToUpperInvariant() == "ALEX")
-                    ProfileId = AlexId;
-                else if (value.ToUpperInvariant() == "STRANGER")
-                    ProfileId = UnEnrolledId;
-            }
-        }
-
-        public Guid? ProfileId
-        {
-            get
-            {
-                if (!TryGetValue(ProfileKey, out var value))
-                {
-                    return null;
-                }
-
-                if (value is string s)
-                    return new Guid(s);
-
-                var guid = value as Guid?;
-                return guid;
-            }
-            set => this[ProfileKey] = value;
-        }
-
-        public string SelectedAction
-        {
-            get => (string)(TryGetValue(SelectActionKey, out var value) ? value : null);
-            set => this[SelectActionKey] = value;
-        }
-
-        public EnrollmentStatus? EnrollmentStatus
-        {
-            get => (EnrollmentStatus?)(int?)(TryGetValue(EnrollmentStatusKey, out var value) ? value : null);
-            set => this[EnrollmentStatusKey] = value;
         }
     }
 }
