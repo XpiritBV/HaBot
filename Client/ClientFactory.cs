@@ -34,6 +34,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 using System.Threading.Tasks;
+using HaBot.Client;
 using Microsoft.Cognitive.SpeakerRecognition.Streaming.Result;
 using Microsoft.Extensions.Configuration;
 
@@ -73,6 +74,14 @@ namespace  Microsoft.Cognitive.SpeakerRecognition.Streaming.Client
 
             var recognitionClient = new RecognitionClient(configuration, clientId, speakerIds, stepSize, windowSize, audioFormat, resultCallBack, serviceClient);
             return recognitionClient;
+        }
+
+        public SpeechToTextClient CreateSTTClient(IConfiguration configuration)
+        {
+            if (configuration == null) throw new ArgumentNullException(nameof(configuration));
+
+            var defaultRecnogition = new Uri("wss://speech.platform.bing.com/api/service/recognition");
+            return new SpeechToTextClient(defaultRecnogition, configuration["SpeechApiKey"]);
         }
     }
 }
