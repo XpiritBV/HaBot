@@ -36,6 +36,7 @@ namespace HaBot
             public const string ManageProfileDialogName = "ManageProfileDialog";
             public const string RecognizeSpeakerDialogName = "RecognizeSpeakerDialog";
             public const string SpeechToTextDialogName = "SpeechToTextDialog";
+            public const string AnalyzeTextDialogName = "AnalyzeTextDialog";
             public const string ViewProfileDialogName = "ViewProfileDialog";
             public const string CreateProfileDialogName = "CreateProfileDialog";
             public const string DeleteProfileDialogName = "DeleteProfileDialog";
@@ -56,6 +57,7 @@ namespace HaBot
             public const string ManageProfiles = "Manage Profiles";
             public const string RecognizeSpeaker = "Recognize Speaker";
             public const string SpeechToText = "Speech to Text";
+            public const string AnalyzeText = "Analyze text";
         }
 
         /// <summary>
@@ -82,6 +84,8 @@ namespace HaBot
             public const string RecognizeThisPrompt = "recognizeThisPrompt";
 
             public const string RecognizeThisTTSPrompt = "recognizeThisTSSPrompt";
+
+            public const string AnalyzeTextPrompt = "analyzeTextPrompt";
 
             public const string NamePrompt = "namePrompt";
 
@@ -114,7 +118,36 @@ namespace HaBot
             AddRecognizerDialog();
 
             //add speech to text dialog
-             AddSpeechToTextDialog();
+            AddSpeechToTextDialog();
+
+            //add text sentiment analyzes
+            AddTextAnalyzes();
+        }
+
+
+        /// <summary>
+        /// Adds speech to text dialog
+        /// </summary>
+        private void AddTextAnalyzes()
+        {
+            Add(Inputs.AnalyzeTextPrompt, new TextPrompt(SentenceValidator));
+            Add(Dialogs.AnalyzeTextDialogName, new WaterfallStep[]
+            {
+                async (dc, args, next) =>
+                {
+                    await dc.Prompt(Inputs.AnalyzeTextPrompt, "How is your day going?");
+                },
+                async (dc, args, next) =>
+                {
+                   string sentence = (string) args["Value"];
+                   var textClient = new ClientFactory().CreateTextAnalyticsClient(_configuration);
+
+                   await dc.Context.SendActivity(await textClient.GetSentimentFromText(sentence));
+
+                   //we're done
+                   await dc.Replace(Dialogs.MainDialogName);
+                }
+            });
         }
 
         /// <summary>
@@ -521,7 +554,8 @@ namespace HaBot
                     {
                         MainMenu.ManageProfiles,
                         MainMenu.RecognizeSpeaker,
-                        MainMenu.SpeechToText
+                        MainMenu.SpeechToText,
+                        MainMenu.AnalyzeText
                     };
                     await dc.Prompt(Inputs.ManageOrRecognize, "What do you want to do?", new ChoicePromptOptions
                     {
@@ -545,6 +579,10 @@ namespace HaBot
 
                         case MainMenu.SpeechToText:
                             await dc.Replace(Dialogs.SpeechToTextDialogName);
+                            break;
+
+                        case MainMenu.AnalyzeText:
+                            await dc.Replace(Dialogs.AnalyzeTextDialogName);
                             break;
                     }
                 }
@@ -670,10 +708,23 @@ namespace HaBot
         {
             var client = new ClientFactory().CreateSTTClient(_configuration);
             var result = await client.TranslateToText(attachmentContentUrl).ConfigureAwait(false);
-
             await dc.Context.SendActivity(result);
         }
 
+        /// <summary>
+        /// Asks for user name.
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="result"></param>
+        /// <returns></returns>
+        private async Task SentenceValidator(ITurnContext context, TextResult result)
+        {
+            if (result.Value.Length <= 4)
+            {
+                result.Status = PromptStatus.NotRecognized;
+                await context.SendActivity("Your sentence should be at least 4 characters long.");
+            }
+        }
 
         /// <summary>
         /// Asks for user name.

@@ -80,8 +80,16 @@ namespace  Microsoft.Cognitive.SpeakerRecognition.Streaming.Client
         {
             if (configuration == null) throw new ArgumentNullException(nameof(configuration));
 
-            var defaultRecnogition = new Uri("wss://speech.platform.bing.com/api/service/recognition");
-            return new SpeechToTextClient(defaultRecnogition, configuration["SpeechApiKey"]);
+            var defaultRecnogitionUri = new Uri("wss://speech.platform.bing.com/api/service/recognition");
+            return new SpeechToTextClient(defaultRecnogitionUri, configuration["SpeechApiKey"]);
+        }
+
+        public TextSentimentClient CreateTextAnalyticsClient(IConfiguration configuration)
+        {
+            if (configuration == null) throw new ArgumentNullException(nameof(configuration));
+
+            var serviceUrl = "https://westus.api.cognitive.microsoft.com";
+            return new TextSentimentClient(serviceUrl, configuration["TextAnalyticsApiKey"]);
         }
     }
 }
