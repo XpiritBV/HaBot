@@ -73,6 +73,7 @@ namespace HaBot
 
             app.UseDefaultFiles()
                 .UseStaticFiles()
+                .UseWebSockets()
                 .UseBotFramework();
         }
     }

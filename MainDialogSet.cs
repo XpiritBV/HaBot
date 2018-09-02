@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -34,6 +35,7 @@ namespace HaBot
             public const string MainDialogName = "MainDialog";
             public const string ManageProfileDialogName = "ManageProfileDialog";
             public const string RecognizeSpeakerDialogName = "RecognizeSpeakerDialog";
+            public const string SpeechToTextDialogName = "SpeechToTextDialog";
             public const string ViewProfileDialogName = "ViewProfileDialog";
             public const string CreateProfileDialogName = "CreateProfileDialog";
             public const string DeleteProfileDialogName = "DeleteProfileDialog";
@@ -53,6 +55,7 @@ namespace HaBot
         {
             public const string ManageProfiles = "Manage Profiles";
             public const string RecognizeSpeaker = "Recognize Speaker";
+            public const string SpeechToText = "Speech to Text";
         }
 
         /// <summary>
@@ -77,6 +80,8 @@ namespace HaBot
             public const string ManageProfile = "managePrompt";
 
             public const string RecognizeThisPrompt = "recognizeThisPrompt";
+
+            public const string RecognizeThisTTSPrompt = "recognizeThisTSSPrompt";
 
             public const string NamePrompt = "namePrompt";
 
@@ -107,6 +112,59 @@ namespace HaBot
 
             //add recognizer dialog
             AddRecognizerDialog();
+
+            //add speech to text dialog
+             AddSpeechToTextDialog();
+        }
+
+        /// <summary>
+        /// Adds speech to text dialog
+        /// </summary>
+        private void AddSpeechToTextDialog()
+        {
+            Add(Inputs.RecognizeThisTTSPrompt, new AttachmentPrompt());
+
+            Add(Dialogs.SpeechToTextDialogName, new WaterfallStep[]
+            {
+                async (dc, args, next) =>
+                {
+                    await dc.Prompt(Inputs.RecognizeThisTTSPrompt, "Please upload a .wav file", new PromptOptions());
+                },
+                async (dc, args, next) =>
+                {
+                    //Get attachment details
+                    var attachment = ((List<Attachment>) args["Attachments"]).FirstOrDefault();
+
+                    if (attachment == null)
+                    {
+                        await dc.Context.SendActivity("I didn't get the attachment...");
+                        //we're done
+                        await dc.Replace(Dialogs.MainDialogName);
+                        return;
+                    }
+
+                    if (attachment.ContentType != "audio/wav" || string.IsNullOrWhiteSpace(attachment.ContentUrl))
+                    {
+                        await dc.Context.SendActivity($"I didn't get a .wav file attachment...");
+                        //we're done
+                        await dc.Replace(Dialogs.MainDialogName);
+                        return;
+                    }
+
+                    var state = dc.Context.GetConversationState<ProfileState>();
+
+                    string attachmentContentUrl = attachment.ContentUrl;
+
+                    //send attachment in chunks to be analyzed
+                    await dc.Context.SendActivity("Analyzing text...");
+
+                    await AnalyzeSpeechFile(attachmentContentUrl, dc);
+                   
+                    await dc.Context.SendActivity("Analysis complete.");
+                    //we're done
+                    await dc.Replace(Dialogs.MainDialogName);
+                }
+            });
         }
 
         /// <summary>
@@ -462,7 +520,8 @@ namespace HaBot
                     var mainOptions = new List<string>
                     {
                         MainMenu.ManageProfiles,
-                        MainMenu.RecognizeSpeaker
+                        MainMenu.RecognizeSpeaker,
+                        MainMenu.SpeechToText
                     };
                     await dc.Prompt(Inputs.ManageOrRecognize, "What do you want to do?", new ChoicePromptOptions
                     {
@@ -482,6 +541,10 @@ namespace HaBot
 
                         case MainMenu.RecognizeSpeaker:
                             await dc.Replace(Dialogs.RecognizeSpeakerDialogName);
+                            break;
+
+                        case MainMenu.SpeechToText:
+                            await dc.Replace(Dialogs.SpeechToTextDialogName);
                             break;
                     }
                 }
@@ -600,6 +663,17 @@ namespace HaBot
                 await dc.Context.SendActivity($"Recognition failed with error '{ex.Message}'.");
             }
         }
+
+
+
+        private async Task AnalyzeSpeechFile(string attachmentContentUrl, DialogContext dc)
+        {
+            var client = new ClientFactory().CreateSTTClient(_configuration);
+            var result = await client.TranslateToText(attachmentContentUrl).ConfigureAwait(false);
+
+            await dc.Context.SendActivity(result);
+        }
+
 
         /// <summary>
         /// Asks for user name.
