@@ -22,7 +22,7 @@
     <PackageReference Include="Microsoft.Bot.Builder.Integration.AspNet.Core" Version="4.0.1-preview" />
     <PackageReference Include="Microsoft.Bot.Builder.Dialogs" Version="4.0.1-preview" />
     <PackageReference Include="Microsoft.ProjectOxford.SpeakerRecognition" Version="1.2.0" />
-    <PackageReference Include="Newtonsoft.Json" Version="11.0.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
   </ItemGroup>
 
 </Project>
